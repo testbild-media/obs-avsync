@@ -1,0 +1,7 @@
+# build output and downloaded SDKs (see tools/make-implibs.ps1 and README)
+_build/
+_deps/
+# local material
+_internal/
+*.user
+.vs/
