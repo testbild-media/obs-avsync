@@ -1,4 +1,4 @@
-# Polls /api/status every N seconds and appends compact lines (for debugging start-up behaviour).
+﻿# Polls /api/status every N seconds and appends compact lines (for debugging start-up behaviour).
 param([int]$Port = 8765, [int]$Seconds = 40, [double]$Interval = 2, [string]$Out)
 $end = (Get-Date).AddSeconds($Seconds)
 while ((Get-Date) -lt $end) {

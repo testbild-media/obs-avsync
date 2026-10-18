@@ -50,8 +50,9 @@ Deinstallieren: Ordner `C:\ProgramData\obs-studio\plugins\obs-avsync` löschen b
 ### Handy-Seite
 
 * **Online:** **https://testbild-media.github.io/obs-avsync/**. Das Dock zeigt dafür standardmäßig einen QR-Code.
-  * Der Workflow `.github/workflows/pages.yml` veröffentlicht den Ordner `web/` bei jedem Push auf `main` (*Settings → Pages → Source*: „GitHub Actions“).
-  * Für einen eigenen Fork die eigene URL im Dock unter *Einstellungen → Online-URL* eintragen.
+  * Die Seite liegt im Repository [testbild-media.github.io](https://github.com/testbild-media/testbild-media.github.io) im Ordner `obs-avsync/`. Nach Änderungen an `web/` aktualisiert `tools\publish-web.ps1` sie dort.
+  * Über HTTPS verhindert die Seite auch, dass sich der Bildschirm abschaltet (Wake Lock).
+  * Eigener Fork: `.github/workflows/pages.yml` veröffentlicht `web/` als Projektseite (manuell starten oder `push` einkommentieren). Die eigene URL dann im Dock unter *Einstellungen → Online-URL* eintragen.
   * Alternativ den Inhalt von `web/` auf einen beliebigen statischen Webserver legen.
 * **Im WLAN direkt vom Plugin:**
   * Das Dock zeigt die Adresse (z. B. `http://192.168.1.20:8765/`) als QR-Code.
@@ -153,6 +154,7 @@ powershell -ExecutionPolicy Bypass -File tools\build.ps1        # baut Plugin, T
 _build\avsync-tests.exe                                         # Unit-Tests
 powershell -ExecutionPolicy Bypass -File tools\install.ps1      # ins installierte OBS kopieren
 powershell -ExecutionPolicy Bypass -File tools\package.ps1      # Release-ZIPs in _build\release
+powershell -ExecutionPolicy Bypass -File tools\publish-web.ps1  # Handy-Seite auf testbild-media.github.io aktualisieren
 ```
 
 * Statt libobs selbst zu bauen, werden Import-Libraries aus der installierten `obs.dll` erzeugt (`tools\make-implibs.ps1`). Nach einem OBS-Update `tools\setup-deps.ps1` erneut ausführen.

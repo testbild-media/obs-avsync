@@ -1,4 +1,4 @@
-# Konfiguriert und baut das Projekt (Ninja + MSVC).
+﻿# Konfiguriert und baut das Projekt (Ninja + MSVC).
 param(
     [ValidateSet("Release", "RelWithDebInfo", "Debug")]
     [string]$Config = "RelWithDebInfo",

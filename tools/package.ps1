@@ -1,4 +1,4 @@
-# Erstellt die Release-Pakete in _build\release:
+﻿# Erstellt die Release-Pakete in _build\release:
 #   obs-avsync-<version>-windows-x64.zip  (Plugin + install.cmd + README)
 #   obs-avsync-web-<version>.zip          (Handy-Seite, statisches HTML/JS/CSS)
 param(

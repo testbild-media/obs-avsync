@@ -1,4 +1,4 @@
-# Installiert (oder entfernt) das Plugin für die normale OBS-Installation.
+﻿# Installiert (oder entfernt) das Plugin für die normale OBS-Installation.
 #   powershell -ExecutionPolicy Bypass -File tools\install.ps1
 #   powershell -ExecutionPolicy Bypass -File tools\install.ps1 -Uninstall
 param(

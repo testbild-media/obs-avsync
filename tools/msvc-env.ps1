@@ -1,4 +1,4 @@
-# Laedt die MSVC-x64-Umgebung (vcvars64) in die aktuelle PowerShell-Sitzung.
+﻿# Laedt die MSVC-x64-Umgebung (vcvars64) in die aktuelle PowerShell-Sitzung.
 if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     $vsPath = $null

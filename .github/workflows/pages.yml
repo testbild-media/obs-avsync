@@ -1,12 +1,13 @@
-# Veröffentlicht die Handy-Seite (Ordner web/) auf GitHub Pages.
-# Einmalig: Repository -> Settings -> Pages -> Source: "GitHub Actions".
-name: Handy-Seite auf GitHub Pages
+# Optional: veröffentlicht die Handy-Seite (Ordner web/) als Projektseite dieses Repositorys.
+# Die offizielle Seite liegt im Repo testbild-media.github.io (tools/publish-web.ps1).
+# Für Forks: Settings -> Pages -> Source "GitHub Actions" wählen und hier "push" einkommentieren.
+name: Handy-Seite auf GitHub Pages (manuell)
 
 on:
-  push:
-    branches: [main]
-    paths: ["web/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
+  # push:
+  #   branches: [main]
+  #   paths: ["web/**"]
 
 permissions:
   contents: read

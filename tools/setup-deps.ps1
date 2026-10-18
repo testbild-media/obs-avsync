@@ -1,4 +1,4 @@
-# Lädt alles, was zum Bauen nötig ist, nach _deps:
+﻿# Lädt alles, was zum Bauen nötig ist, nach _deps:
 #   - OBS-Quelltext (nur Header) passend zur installierten OBS-Version
 #   - offizielles OBS-Qt6-SDK (obs-deps), Hash wird geprüft
 #   - Import-Libraries aus der installierten obs.dll / obs-frontend-api.dll

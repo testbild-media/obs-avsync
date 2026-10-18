@@ -1,4 +1,4 @@
-# Creates an isolated portable OBS copy with the plugin and a test scene collection.
+﻿# Creates an isolated portable OBS copy with the plugin and a test scene collection.
 # The user's own OBS configuration is not touched.
 param(
     [Parameter(Mandatory)] [string]$Target,

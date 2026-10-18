@@ -1,4 +1,4 @@
-# Erzeugt MSVC-Import-Libraries (obs.lib, obs-frontend-api.lib) aus einer
+﻿# Erzeugt MSVC-Import-Libraries (obs.lib, obs-frontend-api.lib) aus einer
 # installierten OBS-Version. Damit muss libobs nicht selbst gebaut werden.
 param(
     [string]$ObsDir = "C:\Program Files\obs-studio",
