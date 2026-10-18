@@ -24,11 +24,17 @@ if (Test-Path $target) { Remove-Item -Recurse -Force $target -ErrorAction Stop }
 New-Item -ItemType Directory -Force $target -ErrorAction Stop | Out-Null
 Copy-Item "$root\web\*" $target -Recurse -ErrorAction Stop
 
+# cache busting: phones must not keep an old app.js after an update
+$rev = git -C $root rev-parse --short HEAD
+$index = Join-Path $target "index.html"
+$html = [System.IO.File]::ReadAllText($index)
+$html = $html -replace '(app\.js|style\.css)\?v=[^"]*', "`$1?v=$rev"
+[System.IO.File]::WriteAllText($index, $html, (New-Object System.Text.UTF8Encoding $false))
+
 git -C $Clone add -A $SubDir
 git -C $Clone diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { Write-Host "Keine Änderungen an der Handy-Seite."; exit 0 }
 
-$rev = git -C $root rev-parse --short HEAD
 git -C $Clone commit -q -m "AV-Sync Handy-Seite aktualisiert (obs-avsync $rev)"
 if ($NoPush) { Write-Host "Commit erstellt, nicht gepusht ($Clone)."; exit 0 }
 git -C $Clone push -q
