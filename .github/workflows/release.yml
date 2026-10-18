@@ -1,0 +1,90 @@
+# Baut das Plugin auf GitHub und veröffentlicht ein Release mit den ZIP-Downloads.
+# Auslösen: Tag pushen (z. B. git tag v1.0.1 && git push origin v1.0.1)
+# oder unter Actions -> "Release" -> "Run workflow" mit einem bestehenden Tag.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag, für den das Release gebaut wird (z. B. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  OBS_VERSION: "32.2.2"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Tag bestimmen
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: OBS ${{ env.OBS_VERSION }} herunterladen (für Header und Import-Libraries)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/obsproject/obs-studio/releases/download/$env:OBS_VERSION/OBS-Studio-$env:OBS_VERSION-Windows-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile obs.zip
+          New-Item -ItemType Directory -Force _deps\obs-bin | Out-Null
+          tar -xf obs.zip -C _deps\obs-bin
+          $dll = Get-ChildItem _deps\obs-bin -Recurse -Filter obs.dll | Where-Object { $_.FullName -match '\\bin\\64bit\\' } | Select-Object -First 1
+          if (-not $dll) { throw "obs.dll nicht gefunden" }
+          $obsDir = $dll.Directory.Parent.Parent.FullName
+          "OBS_DIR=$obsDir" >> $env:GITHUB_ENV
+
+      - name: Abhängigkeiten (OBS-Header, Qt6, Import-Libraries)
+        shell: powershell
+        run: tools\setup-deps.ps1 -ObsDir "$env:OBS_DIR"
+
+      - name: Ninja bereitstellen
+        shell: pwsh
+        run: if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
+
+      - name: Bauen
+        shell: powershell
+        run: tools\build.ps1 -Config RelWithDebInfo
+
+      - name: Unit-Tests
+        shell: pwsh
+        run: |
+          _build\avsync-tests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Tests fehlgeschlagen" }
+
+      - name: Pakete erstellen
+        shell: powershell
+        run: tools\package.ps1 -Version "${{ steps.tag.outputs.version }}"
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: AV-Sync ${{ steps.tag.outputs.version }}
+          files: _build/release/*.zip
+          body: |
+            **AV-Sync** misst in OBS Studio die Video- und Audio-Latenz gegen echte UTC-Zeit sowie den A/V-Versatz.
+
+            ### Installation (Windows, OBS ${{ env.OBS_VERSION }} oder neuer 32.x)
+            1. OBS schließen.
+            2. `obs-avsync-${{ steps.tag.outputs.version }}-windows-x64.zip` herunterladen und entpacken.
+            3. `install.cmd` ausführen (kopiert das Plugin nach `C:\ProgramData\obs-studio\plugins\obs-avsync`).
+            4. OBS starten → Menü **Docks → AV-Sync**.
+
+            ### Handy-Seite
+            Online: https://testbild-media.github.io/obs-avsync/ – oder im WLAN direkt vom Plugin (QR-Code im Dock).
+            `obs-avsync-web-${{ steps.tag.outputs.version }}.zip` enthält die Seite zum Selbsthosten.
+
+            Anleitung: siehe [README](https://github.com/testbild-media/obs-avsync#readme).

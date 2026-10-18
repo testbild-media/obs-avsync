@@ -39,7 +39,7 @@ Handy (UTC per Internet-Zeit oder WLAN)        OBS (UTC per NTP)
 ### OBS-Plugin (Windows, OBS 32.x, 64 Bit)
 
 1. OBS schließen.
-2. Release-ZIP entpacken und `install.cmd` ausführen.
+2. **[Neuestes Release herunterladen](https://github.com/testbild-media/obs-avsync/releases/latest)** (`obs-avsync-<version>-windows-x64.zip`), entpacken und `install.cmd` ausführen.
    Alternativ den Ordner `obs-avsync` nach `C:\ProgramData\obs-studio\plugins\` kopieren.
    Aus dem Quellcode geht es mit `tools\install.ps1`.
 3. OBS starten → Menü **Docks → AV-Sync**.
@@ -76,12 +76,12 @@ Auf dem iPhone: Seite öffnen → *Teilen → Zum Home-Bildschirm* ergibt eine V
 
 | Bereich | Inhalt |
 |---|---|
-| **Referenzzeit** | Lokalzeit der NTP-korrigierten Referenzuhr, NTP-Server, Genauigkeit, Abweichung der Windows-Uhr. |
-| **Handy-Testsignal** | QR-Code und Links zur Handy-Seite (WLAN und online), verbundene Handys mit Sync-Genauigkeit und Bildrate. |
-| **Messwerte** | Pro Messpunkt: letzter Wert, Median, Streuung σ, Anzahl, Status. Tooltip mit Mittelwert, Min, Max. |
-| **A/V-Versatz** | Wahl von Bild- und Ton-Messpunkt, Versatz (Median), Interpretation, *Sync-Offset übernehmen*, Verlaufsgrafik. |
-| **Geplante Messung** | Messlauf mit Startuhrzeit (oder *Jetzt starten*) und Dauer. Danach Zusammenfassung und automatische CSV-Datei (Standard: `Dokumente\AV-Sync`). |
-| **Einstellungen** | Port, Online-URL, NTP-Server, Programm-Messung (Bild, Audiospur), maximale Latenz, Live-Fenster, CSV-Ordner und -Format. |
+| **Kopfzeile** | Referenzuhr (NTP-korrigiert) mit Genauigkeit. 📱 zeigt die QR-Codes und die Zahl verbundener Handys, ↺ setzt die Statistik zurück, ⚙ öffnet die Einstellungen. Details stehen im Tooltip. |
+| **QR-Codes** | Online-Seite und WLAN-Seite. Sie erscheinen automatisch, solange noch nichts gemessen wird. |
+| **Messwerte** | Pro Messpunkt Latenz (Median), Streuung σ und Anzahl. Der Punkt zeigt den Status: grün = misst, orange = Signal gefunden, grau = nichts. Der Tooltip enthält letzten Wert, Mittelwert, Min und Max. |
+| **A/V-Versatz** | Bild- und Ton-Messpunkt wählen, Versatz mit Kurzdeutung („Ton 31 ms zu spät“), **Übernehmen** passt den Sync-Offset an. Darunter der Verlauf (blau Bild, orange Ton, grün Versatz). |
+| **Messlauf** | Startzeit und Dauer, **Planen** oder **Jetzt**, ✕ abbrechen, 📁 CSV-Ordner. Danach erscheint eine Ergebniszeile mit CSV-Link (Standardordner `Dokumente\AV-Sync`). |
+| **Einstellungen (⚙)** | Bezeichnung des nächsten Messlaufs, WLAN-Seite und Port, Online-URL, NTP-Server, Programm-Messung (Bild, Audiospur), maximale Latenz, Live-Fenster, CSV-Ordner und -Format. |
 
 **Messpunkte**
 

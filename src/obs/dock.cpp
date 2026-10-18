@@ -1,4 +1,5 @@
-// Qt dock "AV-Sync": reference clock, phone link, live measurements, A/V offset, sessions, settings.
+// Qt dock "AV-Sync" (compact): clock + status line, phone QR codes (auto-collapsing),
+// measurement table, A/V offset with graph, one-line session control, collapsible settings.
 #include "plugin.hpp"
 #include "qrcodegen.hpp"
 
@@ -9,11 +10,10 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
-#include <QDoubleSpinBox>
 #include <QFileDialog>
-#include <QFontDatabase>
+#include <QFileInfo>
 #include <QFormLayout>
-#include <QGroupBox>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -75,19 +75,58 @@ QPixmap makeQr(const QString &text, int targetPx)
 	return QPixmap::fromImage(img.scaled(n * scale, n * scale, Qt::IgnoreAspectRatio, Qt::FastTransformation));
 }
 
+QIcon dotIcon(const QColor &c)
+{
+	QPixmap pm(10, 10);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing);
+	p.setPen(Qt::NoPen);
+	p.setBrush(c);
+	p.drawEllipse(QRectF(1, 1, 8, 8));
+	return QIcon(pm);
+}
+
+QLabel *sectionTitle(const QString &text, QWidget *parent)
+{
+	auto *l = new QLabel(text, parent);
+	l->setStyleSheet(QStringLiteral("font-weight: bold;"));
+	return l;
+}
+
+QFrame *separator(QWidget *parent)
+{
+	auto *f = new QFrame(parent);
+	f->setFrameShape(QFrame::NoFrame);
+	f->setFixedHeight(1);
+	f->setStyleSheet(QStringLiteral("background-color: rgba(128, 128, 128, 70); border: none;"));
+	return f;
+}
+
+QToolButton *toolButton(const QString &text, const QString &tip, QWidget *parent)
+{
+	auto *b = new QToolButton(parent);
+	b->setText(text);
+	b->setToolTip(tip);
+	b->setAutoRaise(true);
+	return b;
+}
+
+const QColor kGreen(62, 207, 142), kOrange(245, 185, 66), kGrey(120, 125, 135);
+const QColor kVideoColor(77, 163, 255), kAudioColor(245, 160, 60), kOffsetColor(80, 200, 120);
+
 // ---------------------------------------------------------------- latency graph
 
 class LatencyGraph : public QWidget {
 public:
 	struct Series {
-		QString name;
 		QColor color;
 		std::vector<std::pair<int64_t, double>> points; // seq, ms
 	};
 
 	explicit LatencyGraph(QWidget *parent = nullptr) : QWidget(parent)
 	{
-		setMinimumHeight(130);
+		setFixedHeight(64);
 		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	}
 
@@ -102,7 +141,10 @@ protected:
 	{
 		QPainter p(this);
 		p.setRenderHint(QPainter::Antialiasing);
-		const QRectF area = rect().adjusted(42, 8, -8, -18);
+		QFont f = font();
+		f.setPointSizeF(std::max(6.0, f.pointSizeF() * 0.75));
+		p.setFont(f);
+		const QRectF area = rect().adjusted(34, 3, -3, -3);
 		p.fillRect(rect(), palette().base());
 
 		int64_t s0 = INT64_MAX, s1 = INT64_MIN;
@@ -114,57 +156,46 @@ protected:
 				lo = std::min(lo, pt.second);
 				hi = std::max(hi, pt.second);
 			}
-		p.setPen(palette().color(QPalette::Mid));
-		p.drawRect(area);
 		if (s0 > s1) {
 			p.setPen(palette().color(QPalette::PlaceholderText));
 			p.drawText(area, Qt::AlignCenter, T("Dock.Graph.Empty"));
 			return;
 		}
 		if (hi - lo < 10.0) {
-			double mid = (hi + lo) / 2;
+			const double mid = (hi + lo) / 2;
 			lo = mid - 5;
 			hi = mid + 5;
 		}
-		const double pad = (hi - lo) * 0.1;
+		const double pad = (hi - lo) * 0.08;
 		lo -= pad;
 		hi += pad;
 		if (s1 == s0)
 			s1 = s0 + 1;
-
 		auto X = [&](int64_t seq) { return area.left() + (double)(seq - s0) / (double)(s1 - s0) * area.width(); };
 		auto Y = [&](double v) { return area.bottom() - (v - lo) / (hi - lo) * area.height(); };
 
-		// grid lines
-		const double range = hi - lo;
 		const double steps[] = {1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000};
 		double step = steps[0];
 		for (double st : steps) {
 			step = st;
-			if (range / st <= 5)
+			if ((hi - lo) / st <= 3)
 				break;
 		}
-		QFont f = font();
-		f.setPointSizeF(std::max(6.0, f.pointSizeF() * 0.8));
-		p.setFont(f);
 		for (double v = std::ceil(lo / step) * step; v <= hi; v += step) {
 			const double y = Y(v);
-			p.setPen(QPen(palette().color(QPalette::Mid), 1, v == 0 ? Qt::SolidLine : Qt::DotLine));
+			p.setPen(QPen(palette().color(QPalette::Mid), 1, Qt::DotLine));
 			p.drawLine(QPointF(area.left(), y), QPointF(area.right(), y));
-			p.setPen(palette().color(QPalette::Text));
-			p.drawText(QRectF(0, y - 8, area.left() - 4, 16), Qt::AlignRight | Qt::AlignVCenter, ms(v, 0));
+			p.setPen(palette().color(QPalette::PlaceholderText));
+			p.drawText(QRectF(0, y - 7, area.left() - 3, 14), Qt::AlignRight | Qt::AlignVCenter, ms(v, 0));
 		}
-
-		// series
-		int legendX = (int)area.left() + 4;
 		for (const auto &s : series_) {
 			if (s.points.empty())
 				continue;
 			QPainterPath path;
-			bool first = true;
 			int64_t prev = 0;
+			bool first = true;
 			for (const auto &pt : s.points) {
-				QPointF q(X(pt.first), Y(pt.second));
+				const QPointF q(X(pt.first), Y(pt.second));
 				if (first || pt.first - prev > 3)
 					path.moveTo(q);
 				else
@@ -172,16 +203,9 @@ protected:
 				first = false;
 				prev = pt.first;
 			}
-			p.setPen(QPen(s.color, 1.6));
-			p.drawPath(path);
-			p.setBrush(s.color);
-			for (const auto &pt : s.points)
-				p.drawEllipse(QPointF(X(pt.first), Y(pt.second)), 1.8, 1.8);
+			p.setPen(QPen(s.color, 1.5));
 			p.setBrush(Qt::NoBrush);
-			p.setPen(s.color);
-			const QString label = s.name;
-			p.drawText(QPoint(legendX, (int)area.bottom() + 14), label);
-			legendX += p.fontMetrics().horizontalAdvance(label) + 14;
+			p.drawPath(path);
 		}
 	}
 
@@ -196,14 +220,15 @@ public:
 	explicit AvSyncDock(QWidget *parent = nullptr);
 
 private:
-	QGroupBox *buildClock();
-	QGroupBox *buildPhone();
-	QGroupBox *buildTable();
-	QGroupBox *buildOffset();
-	QGroupBox *buildSession();
+	QWidget *buildHeader();
+	QWidget *buildPhonePanel();
+	QWidget *buildMeasurements();
+	QWidget *buildOffset();
+	QWidget *buildSession();
 	QWidget *buildSettings();
 
 	void refresh();
+	void refreshHeaderAndPhone(const std::vector<ProbeSnapshot> &snap);
 	void refreshCombos(const std::vector<ProbeSnapshot> &snap);
 	void refreshTable(const std::vector<ProbeSnapshot> &snap);
 	void refreshOffset(const std::vector<ProbeSnapshot> &snap);
@@ -216,34 +241,43 @@ private:
 	QTimer timer_;
 	QWidget *content_ = nullptr;
 
+	// header
 	QLabel *clockLabel_ = nullptr;
-	QLabel *clockStatus_ = nullptr;
+	QLabel *ntpLabel_ = nullptr;
+	QToolButton *qrButton_ = nullptr;
+	QToolButton *settingsButton_ = nullptr;
 
-	QLabel *qrLabel_ = nullptr;
-	QLabel *qrLanLabel_ = nullptr;
-	QWidget *qrColumn_ = nullptr;
-	QWidget *qrLanColumn_ = nullptr;
-	QString qrLanText_;
-	QLabel *urlLabel_ = nullptr;
+	// phone panel
+	QWidget *phonePanel_ = nullptr;
+	bool phonePanelUserChoice_ = false;
+	QLabel *qrOnline_ = nullptr, *qrLan_ = nullptr;
+	QWidget *qrOnlineCol_ = nullptr, *qrLanCol_ = nullptr;
+	QString qrOnlineText_ = QStringLiteral("-"), qrLanText_ = QStringLiteral("-");
+	QLabel *linksLabel_ = nullptr;
 	QLabel *phonesLabel_ = nullptr;
-	QString qrText_;
 
+	// measurements
 	QTableWidget *table_ = nullptr;
+	QLabel *emptyHint_ = nullptr;
 
+	// offset
 	QComboBox *videoCombo_ = nullptr;
 	QComboBox *audioCombo_ = nullptr;
+	std::vector<int> comboVideoIds_, comboAudioIds_;
 	QLabel *offsetLabel_ = nullptr;
 	QLabel *offsetHint_ = nullptr;
 	QPushButton *applyButton_ = nullptr;
 	LatencyGraph *graph_ = nullptr;
-	std::vector<int> comboVideoIds_, comboAudioIds_;
 
+	// session
 	QTimeEdit *startEdit_ = nullptr;
 	QSpinBox *durationSpin_ = nullptr;
-	QLineEdit *labelEdit_ = nullptr;
+	QToolButton *cancelButton_ = nullptr;
 	QLabel *sessionLabel_ = nullptr;
-	QPushButton *cancelButton_ = nullptr;
 
+	// settings
+	QWidget *settingsPanel_ = nullptr;
+	QLineEdit *labelEdit_ = nullptr;
 	QSpinBox *portSpin_ = nullptr;
 	QCheckBox *serverCheck_ = nullptr;
 	QCheckBox *ntpCheck_ = nullptr;
@@ -267,114 +301,150 @@ AvSyncDock::AvSyncDock(QWidget *parent) : QWidget(parent)
 	scroll->setFrameShape(QFrame::NoFrame);
 	outer->addWidget(scroll);
 
-	auto *content = new QWidget(scroll);
-	content_ = content;
-	auto *lay = new QVBoxLayout(content);
-	lay->setContentsMargins(6, 6, 6, 6);
-	lay->setSpacing(8);
-	lay->addWidget(buildClock());
-	lay->addWidget(buildPhone());
-	lay->addWidget(buildTable());
-	lay->addWidget(buildOffset());
-	lay->addWidget(buildSession());
+	content_ = new QWidget(scroll);
+	auto *lay = new QVBoxLayout(content_);
+	lay->setContentsMargins(6, 4, 6, 4);
+	lay->setSpacing(4);
+	lay->addWidget(buildHeader());
+	lay->addWidget(buildPhonePanel());
 	lay->addWidget(buildSettings());
+	lay->addWidget(separator(content_));
+	lay->addWidget(buildMeasurements());
+	lay->addWidget(separator(content_));
+	lay->addWidget(buildOffset());
+	lay->addWidget(separator(content_));
+	lay->addWidget(buildSession());
 	lay->addStretch(1);
-	scroll->setWidget(content);
+	scroll->setWidget(content_);
 
 	loadSettingsIntoUi();
 	connect(&timer_, &QTimer::timeout, this, [this] { refresh(); });
 	timer_.start(200);
-	refresh();
 }
 
-QGroupBox *AvSyncDock::buildClock()
+QWidget *AvSyncDock::buildHeader()
 {
-	auto *box = new QGroupBox(T("Dock.Clock"), this);
-	auto *lay = new QVBoxLayout(box);
-	clockLabel_ = new QLabel(QStringLiteral("--:--:--.---"), box);
+	auto *w = new QWidget(content_);
+	auto *row = new QHBoxLayout(w);
+	row->setContentsMargins(0, 0, 0, 0);
+	row->setSpacing(6);
+	clockLabel_ = new QLabel(QStringLiteral("--:--:--.---"), w);
 	// a widget style sheet wins over the OBS theme (setFont() alone does not)
 	clockLabel_->setStyleSheet(QStringLiteral(
-		"font-family: 'Consolas', 'Cascadia Mono', 'Menlo', monospace; font-size: 22pt; font-weight: bold;"));
-	clockLabel_->setAlignment(Qt::AlignCenter);
-	clockStatus_ = new QLabel(box);
-	clockStatus_->setWordWrap(true);
-	clockStatus_->setAlignment(Qt::AlignCenter);
-	lay->addWidget(clockLabel_);
-	lay->addWidget(clockStatus_);
-	return box;
+		"font-family: 'Consolas', 'Cascadia Mono', 'Menlo', monospace; font-size: 15pt; font-weight: bold;"));
+	ntpLabel_ = new QLabel(w);
+	qrButton_ = toolButton(QStringLiteral("📱"), T("Dock.Phone.Toggle"), w);
+	auto *reset = toolButton(QStringLiteral("↺"), T("Dock.Reset"), w);
+	settingsButton_ = toolButton(QStringLiteral("⚙"), T("Dock.Settings"), w);
+	settingsButton_->setCheckable(true);
+	connect(qrButton_, &QToolButton::clicked, this, [this] {
+		phonePanelUserChoice_ = true;
+		phonePanel_->setVisible(!phonePanel_->isVisible());
+	});
+	connect(reset, &QToolButton::clicked, this, [] { Plugin::instance().engine().resetStats(); });
+	connect(settingsButton_, &QToolButton::toggled, this, [this](bool on) { settingsPanel_->setVisible(on); });
+	row->addWidget(clockLabel_);
+	row->addWidget(ntpLabel_);
+	row->addStretch(1);
+	row->addWidget(qrButton_);
+	row->addWidget(reset);
+	row->addWidget(settingsButton_);
+	return w;
 }
 
-QGroupBox *AvSyncDock::buildPhone()
+QWidget *AvSyncDock::buildPhonePanel()
 {
-	auto *box = new QGroupBox(T("Dock.Phone"), this);
-	auto *lay = new QVBoxLayout(box);
-	auto *qrRow = new QHBoxLayout();
+	phonePanel_ = new QWidget(content_);
+	auto *row = new QHBoxLayout(phonePanel_);
+	row->setContentsMargins(0, 0, 0, 0);
+	row->setSpacing(8);
 	auto addQr = [&](QLabel *&qr, QWidget *&column, const QString &caption) {
-		column = new QWidget(box);
+		column = new QWidget(phonePanel_);
 		auto *col = new QVBoxLayout(column);
 		col->setContentsMargins(0, 0, 0, 0);
+		col->setSpacing(1);
 		qr = new QLabel(column);
-		qr->setFixedSize(116, 116);
+		qr->setFixedSize(92, 92);
 		qr->setAlignment(Qt::AlignCenter);
 		auto *cap = new QLabel(caption, column);
 		cap->setAlignment(Qt::AlignCenter);
+		cap->setStyleSheet(QStringLiteral("font-size: 8pt;"));
 		col->addWidget(qr, 0, Qt::AlignHCenter);
 		col->addWidget(cap);
-		qrRow->addWidget(column);
+		row->addWidget(column, 0, Qt::AlignTop);
 	};
-	addQr(qrLabel_, qrColumn_, T("Dock.Phone.QrOnline"));
-	addQr(qrLanLabel_, qrLanColumn_, T("Dock.Phone.QrLan"));
-	qrRow->addStretch(1);
-	lay->addLayout(qrRow);
+	addQr(qrOnline_, qrOnlineCol_, T("Dock.Phone.QrOnline"));
+	addQr(qrLan_, qrLanCol_, T("Dock.Phone.QrLan"));
 
-	urlLabel_ = new QLabel(box);
-	urlLabel_->setWordWrap(true);
-	urlLabel_->setTextFormat(Qt::RichText);
-	urlLabel_->setOpenExternalLinks(true);
-	urlLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
-	phonesLabel_ = new QLabel(box);
+	auto *info = new QVBoxLayout();
+	info->setSpacing(2);
+	linksLabel_ = new QLabel(phonePanel_);
+	linksLabel_->setWordWrap(true);
+	linksLabel_->setTextFormat(Qt::RichText);
+	linksLabel_->setOpenExternalLinks(true);
+	linksLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
+	linksLabel_->setStyleSheet(QStringLiteral("font-size: 8pt;"));
+	phonesLabel_ = new QLabel(phonePanel_);
 	phonesLabel_->setWordWrap(true);
-	lay->addWidget(urlLabel_);
-	lay->addWidget(phonesLabel_);
-	return box;
+	phonesLabel_->setStyleSheet(QStringLiteral("font-size: 8pt;"));
+	info->addWidget(linksLabel_);
+	info->addWidget(phonesLabel_);
+	info->addStretch(1);
+	row->addLayout(info, 1);
+	return phonePanel_;
 }
 
-QGroupBox *AvSyncDock::buildTable()
+QWidget *AvSyncDock::buildMeasurements()
 {
-	auto *box = new QGroupBox(T("Dock.Measurements"), this);
-	auto *lay = new QVBoxLayout(box);
-	table_ = new QTableWidget(0, 6, box);
-	table_->setHorizontalHeaderLabels({T("Dock.Col.Probe"), T("Dock.Col.Last"), T("Dock.Col.Median"),
-					   T("Dock.Col.Jitter"), T("Dock.Col.Count"), T("Dock.Col.Status")});
+	auto *w = new QWidget(content_);
+	auto *lay = new QVBoxLayout(w);
+	lay->setContentsMargins(0, 0, 0, 0);
+	lay->setSpacing(2);
+	table_ = new QTableWidget(0, 4, w);
+	table_->setHorizontalHeaderLabels(
+		{T("Dock.Col.Probe"), T("Dock.Col.Latency"), T("Dock.Col.Jitter"), T("Dock.Col.Count")});
 	table_->verticalHeader()->setVisible(false);
+	table_->verticalHeader()->setDefaultSectionSize(20);
+	table_->setShowGrid(false);
 	table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	table_->setSelectionMode(QAbstractItemView::NoSelection);
 	table_->setFocusPolicy(Qt::NoFocus);
+	table_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	table_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
 	table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-	table_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-	table_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
-	auto *hint = new QLabel(T("Dock.Measurements.Hint"), box);
-	hint->setWordWrap(true);
-	hint->setStyleSheet(QStringLiteral("color: palette(placeholder-text);"));
-	auto *reset = new QPushButton(T("Dock.Reset"), box);
-	connect(reset, &QPushButton::clicked, this, [] { Plugin::instance().engine().resetStats(); });
+	table_->horizontalHeader()->setHighlightSections(false);
+	table_->setToolTip(T("Dock.Table.Tip"));
+	emptyHint_ = new QLabel(T("Dock.Measurements.Hint"), w);
+	emptyHint_->setWordWrap(true);
+	emptyHint_->setStyleSheet(QStringLiteral("font-size: 8pt;"));
 	lay->addWidget(table_);
-	lay->addWidget(hint);
-	lay->addWidget(reset, 0, Qt::AlignRight);
-	return box;
+	lay->addWidget(emptyHint_);
+	return w;
 }
 
-QGroupBox *AvSyncDock::buildOffset()
+QWidget *AvSyncDock::buildOffset()
 {
-	auto *box = new QGroupBox(T("Dock.Offset"), this);
-	auto *lay = new QVBoxLayout(box);
-	auto *form = new QFormLayout();
-	videoCombo_ = new QComboBox(box);
-	audioCombo_ = new QComboBox(box);
-	form->addRow(T("Dock.Offset.Video"), videoCombo_);
-	form->addRow(T("Dock.Offset.Audio"), audioCombo_);
-	lay->addLayout(form);
+	auto *w = new QWidget(content_);
+	auto *lay = new QVBoxLayout(w);
+	lay->setContentsMargins(0, 0, 0, 0);
+	lay->setSpacing(3);
+
+	auto *pairRow = new QHBoxLayout();
+	pairRow->setSpacing(4);
+	videoCombo_ = new QComboBox(w);
+	audioCombo_ = new QComboBox(w);
+	videoCombo_->setToolTip(T("Dock.Offset.Video"));
+	audioCombo_->setToolTip(T("Dock.Offset.Audio"));
+	videoCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	audioCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	videoCombo_->setMinimumContentsLength(6);
+	audioCombo_->setMinimumContentsLength(6);
+	pairRow->addWidget(new QLabel(QStringLiteral("🎥"), w));
+	pairRow->addWidget(videoCombo_, 1);
+	pairRow->addWidget(new QLabel(QStringLiteral("🎤"), w));
+	pairRow->addWidget(audioCombo_, 1);
+	lay->addLayout(pairRow);
 
 	auto pairChanged = [this] {
 		const int vi = videoCombo_->currentIndex(), ai = audioCombo_->currentIndex();
@@ -385,141 +455,148 @@ QGroupBox *AvSyncDock::buildOffset()
 	connect(videoCombo_, QOverload<int>::of(&QComboBox::activated), this, pairChanged);
 	connect(audioCombo_, QOverload<int>::of(&QComboBox::activated), this, pairChanged);
 
-	offsetLabel_ = new QLabel(QStringLiteral("–"), box);
-	offsetLabel_->setStyleSheet(QStringLiteral("font-size: 18pt; font-weight: bold;"));
-	offsetLabel_->setAlignment(Qt::AlignCenter);
-	offsetHint_ = new QLabel(box);
+	auto *valueRow = new QHBoxLayout();
+	valueRow->setSpacing(6);
+	offsetLabel_ = new QLabel(QStringLiteral("Δ –"), w);
+	offsetLabel_->setStyleSheet(QStringLiteral("font-size: 15pt; font-weight: bold;"));
+	offsetHint_ = new QLabel(w);
 	offsetHint_->setWordWrap(true);
-	offsetHint_->setAlignment(Qt::AlignCenter);
-	applyButton_ = new QPushButton(T("Dock.Offset.Apply"), box);
+	applyButton_ = new QPushButton(T("Dock.Offset.Apply"), w);
+	applyButton_->setToolTip(T("Dock.Offset.Apply.Tip"));
 	connect(applyButton_, &QPushButton::clicked, this, [this] { applyOffset(); });
-	graph_ = new LatencyGraph(box);
+	valueRow->addWidget(offsetLabel_);
+	valueRow->addWidget(offsetHint_, 1);
+	valueRow->addWidget(applyButton_);
+	lay->addLayout(valueRow);
 
-	lay->addWidget(offsetLabel_);
-	lay->addWidget(offsetHint_);
-	lay->addWidget(applyButton_);
+	graph_ = new LatencyGraph(w);
+	graph_->setToolTip(T("Dock.Graph.Tip"));
 	lay->addWidget(graph_);
-	return box;
+	return w;
 }
 
-QGroupBox *AvSyncDock::buildSession()
+QWidget *AvSyncDock::buildSession()
 {
-	auto *box = new QGroupBox(T("Dock.Session"), this);
-	auto *lay = new QVBoxLayout(box);
-	auto *form = new QFormLayout();
-	startEdit_ = new QTimeEdit(box);
+	auto *w = new QWidget(content_);
+	auto *lay = new QVBoxLayout(w);
+	lay->setContentsMargins(0, 0, 0, 0);
+	lay->setSpacing(2);
+	auto *row = new QHBoxLayout();
+	row->setSpacing(3);
+	startEdit_ = new QTimeEdit(w);
 	startEdit_->setDisplayFormat(QStringLiteral("HH:mm:ss"));
 	startEdit_->setTime(QTime::currentTime().addSecs(60));
-	durationSpin_ = new QSpinBox(box);
+	startEdit_->setToolTip(T("Dock.Session.Start"));
+	durationSpin_ = new QSpinBox(w);
 	durationSpin_->setRange(5, 24 * 3600);
 	durationSpin_->setSuffix(QStringLiteral(" s"));
-	labelEdit_ = new QLineEdit(box);
-	labelEdit_->setPlaceholderText(T("Dock.Session.LabelPlaceholder"));
-	form->addRow(T("Dock.Session.Start"), startEdit_);
-	form->addRow(T("Dock.Session.Duration"), durationSpin_);
-	form->addRow(T("Dock.Session.Label"), labelEdit_);
-	lay->addLayout(form);
-
-	auto *buttons = new QHBoxLayout();
-	auto *plan = new QPushButton(T("Dock.Session.Schedule"), box);
-	auto *now = new QPushButton(T("Dock.Session.Now"), box);
-	cancelButton_ = new QPushButton(T("Dock.Session.Cancel"), box);
-	auto *folder = new QToolButton(box);
-	folder->setText(T("Dock.Session.OpenFolder"));
+	durationSpin_->setToolTip(T("Dock.Session.Duration"));
+	auto *plan = new QPushButton(T("Dock.Session.Schedule"), w);
+	plan->setToolTip(T("Dock.Session.Schedule.Tip"));
+	auto *now = new QPushButton(T("Dock.Session.Now"), w);
+	now->setToolTip(T("Dock.Session.Now.Tip"));
+	cancelButton_ = toolButton(QStringLiteral("✕"), T("Dock.Session.Cancel"), w);
+	auto *folder = toolButton(QStringLiteral("📁"), T("Dock.Session.OpenFolder"), w);
 	connect(plan, &QPushButton::clicked, this, [this] { startSession(false); });
 	connect(now, &QPushButton::clicked, this, [this] { startSession(true); });
-	connect(cancelButton_, &QPushButton::clicked, this, [] { Plugin::instance().engine().cancelSession(); });
+	connect(cancelButton_, &QToolButton::clicked, this, [] { Plugin::instance().engine().cancelSession(); });
 	connect(folder, &QToolButton::clicked, this, [] {
 		const QString dir = QString::fromStdString(Plugin::instance().config().csvFolder);
 		QDir().mkpath(dir);
 		QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 	});
-	buttons->addWidget(plan);
-	buttons->addWidget(now);
-	buttons->addWidget(cancelButton_);
-	buttons->addWidget(folder);
-	lay->addLayout(buttons);
+	row->addWidget(sectionTitle(T("Dock.Session"), w));
+	row->addWidget(startEdit_);
+	row->addWidget(durationSpin_);
+	row->addWidget(plan);
+	row->addWidget(now);
+	row->addWidget(cancelButton_);
+	row->addWidget(folder);
+	row->addStretch(1);
+	lay->addLayout(row);
 
-	sessionLabel_ = new QLabel(box);
+	sessionLabel_ = new QLabel(w);
 	sessionLabel_->setWordWrap(true);
-	sessionLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	sessionLabel_->setTextFormat(Qt::RichText);
+	sessionLabel_->setStyleSheet(QStringLiteral("font-size: 8pt;"));
+	connect(sessionLabel_, &QLabel::linkActivated, this,
+		[](const QString &link) { QDesktopServices::openUrl(QUrl::fromLocalFile(link)); });
 	lay->addWidget(sessionLabel_);
-	return box;
+	return w;
 }
 
 QWidget *AvSyncDock::buildSettings()
 {
-	auto *wrap = new QWidget(this);
-	auto *outer = new QVBoxLayout(wrap);
-	outer->setContentsMargins(0, 0, 0, 0);
-	auto *toggle = new QToolButton(wrap);
-	toggle->setText(T("Dock.Settings"));
-	toggle->setCheckable(true);
-	toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	toggle->setArrowType(Qt::RightArrow);
-	toggle->setStyleSheet(QStringLiteral("QToolButton { border: none; font-weight: bold; }"));
-	auto *box = new QGroupBox(wrap);
-	box->setVisible(false);
-	connect(toggle, &QToolButton::toggled, this, [toggle, box](bool on) {
-		box->setVisible(on);
-		toggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
-	});
-	outer->addWidget(toggle);
-	outer->addWidget(box);
+	settingsPanel_ = new QFrame(content_);
+	static_cast<QFrame *>(settingsPanel_)->setFrameShape(QFrame::StyledPanel);
+	settingsPanel_->setVisible(false);
+	auto *form = new QFormLayout(settingsPanel_);
+	form->setContentsMargins(6, 4, 6, 4);
+	form->setVerticalSpacing(3);
 
-	auto *form = new QFormLayout(box);
-	serverCheck_ = new QCheckBox(T("Dock.Settings.Server"), box);
-	portSpin_ = new QSpinBox(box);
+	labelEdit_ = new QLineEdit(settingsPanel_);
+	labelEdit_->setPlaceholderText(T("Dock.Session.LabelPlaceholder"));
+	serverCheck_ = new QCheckBox(T("Dock.Settings.Server"), settingsPanel_);
+	portSpin_ = new QSpinBox(settingsPanel_);
 	portSpin_->setRange(1024, 65535);
-	ntpCheck_ = new QCheckBox(T("Dock.Settings.Ntp"), box);
-	ntpEdit_ = new QLineEdit(box);
-	progVideoCheck_ = new QCheckBox(T("Dock.Settings.ProgramVideo"), box);
-	progAudioCheck_ = new QCheckBox(T("Dock.Settings.ProgramAudio"), box);
-	trackSpin_ = new QSpinBox(box);
+	publicUrlEdit_ = new QLineEdit(settingsPanel_);
+	publicUrlEdit_->setPlaceholderText(QStringLiteral("https://testbild-media.github.io/obs-avsync/"));
+	ntpCheck_ = new QCheckBox(T("Dock.Settings.Ntp"), settingsPanel_);
+	ntpEdit_ = new QLineEdit(settingsPanel_);
+	progVideoCheck_ = new QCheckBox(T("Dock.Settings.ProgramVideo"), settingsPanel_);
+	progAudioCheck_ = new QCheckBox(T("Dock.Settings.ProgramAudio"), settingsPanel_);
+	trackSpin_ = new QSpinBox(settingsPanel_);
 	trackSpin_->setRange(1, 6);
-	maxLatSpin_ = new QSpinBox(box);
+	trackSpin_->setToolTip(T("Dock.Settings.Track"));
+	maxLatSpin_ = new QSpinBox(settingsPanel_);
 	maxLatSpin_->setRange(200, 9000);
 	maxLatSpin_->setSingleStep(100);
 	maxLatSpin_->setSuffix(QStringLiteral(" ms"));
 	maxLatSpin_->setToolTip(T("Dock.Settings.MaxLatency.Tip"));
-	windowSpin_ = new QSpinBox(box);
+	windowSpin_ = new QSpinBox(settingsPanel_);
 	windowSpin_->setRange(3, 600);
-	csvEdit_ = new QLineEdit(box);
-	auto *browse = new QToolButton(box);
+	csvEdit_ = new QLineEdit(settingsPanel_);
+	auto *browse = new QToolButton(settingsPanel_);
 	browse->setText(QStringLiteral("…"));
 	connect(browse, &QToolButton::clicked, this, [this] {
-		QString dir = QFileDialog::getExistingDirectory(this, T("Dock.Settings.CsvFolder"), csvEdit_->text());
+		const QString dir = QFileDialog::getExistingDirectory(this, T("Dock.Settings.CsvFolder"), csvEdit_->text());
 		if (!dir.isEmpty())
 			csvEdit_->setText(QDir::toNativeSeparators(dir));
 	});
 	auto *csvRow = new QHBoxLayout();
 	csvRow->addWidget(csvEdit_, 1);
 	csvRow->addWidget(browse);
-	csvGermanCheck_ = new QCheckBox(T("Dock.Settings.CsvGerman"), box);
-	publicUrlEdit_ = new QLineEdit(box);
-	publicUrlEdit_->setPlaceholderText(QStringLiteral("https://<name>.github.io/obs-avsync/"));
+	csvGermanCheck_ = new QCheckBox(T("Dock.Settings.CsvGerman"), settingsPanel_);
 
-	form->addRow(serverCheck_);
-	form->addRow(T("Dock.Settings.Port"), portSpin_);
+	auto *progRow = new QHBoxLayout();
+	progRow->addWidget(progVideoCheck_);
+	progRow->addWidget(progAudioCheck_);
+	progRow->addWidget(trackSpin_);
+	progRow->addStretch(1);
+	auto *serverRow = new QHBoxLayout();
+	serverRow->addWidget(serverCheck_);
+	serverRow->addWidget(portSpin_);
+	serverRow->addStretch(1);
+
+	form->addRow(T("Dock.Session.Label"), labelEdit_);
+	form->addRow(serverRow);
 	form->addRow(T("Dock.Settings.PublicUrl"), publicUrlEdit_);
 	form->addRow(ntpCheck_);
 	form->addRow(T("Dock.Settings.NtpServers"), ntpEdit_);
-	form->addRow(progVideoCheck_);
-	form->addRow(progAudioCheck_);
-	form->addRow(T("Dock.Settings.Track"), trackSpin_);
+	form->addRow(progRow);
 	form->addRow(T("Dock.Settings.MaxLatency"), maxLatSpin_);
 	form->addRow(T("Dock.Settings.Window"), windowSpin_);
 	form->addRow(T("Dock.Settings.CsvFolder"), csvRow);
 	form->addRow(csvGermanCheck_);
-	auto *apply = new QPushButton(T("Dock.Settings.Apply"), box);
+	auto *apply = new QPushButton(T("Dock.Settings.Apply"), settingsPanel_);
 	connect(apply, &QPushButton::clicked, this, [this] { applySettings(); });
 	form->addRow(apply);
-	return wrap;
+	return settingsPanel_;
 }
 
 void AvSyncDock::loadSettingsIntoUi()
 {
-	Config c = Plugin::instance().config();
+	const Config c = Plugin::instance().config();
 	serverCheck_->setChecked(c.serverEnabled);
 	portSpin_->setValue(c.port);
 	ntpCheck_->setChecked(c.ntpEnabled);
@@ -551,8 +628,8 @@ void AvSyncDock::applySettings()
 	c.csvGerman = csvGermanCheck_->isChecked();
 	c.publicPageUrl = publicUrlEdit_->text().trimmed().toStdString();
 	Plugin::instance().applyConfig(c);
-	qrText_ = QStringLiteral("-");
-	qrLanText_ = QStringLiteral("-");
+	qrOnlineText_ = qrLanText_ = QStringLiteral("-");
+	settingsButton_->setChecked(false);
 }
 
 void AvSyncDock::startSession(bool now)
@@ -580,14 +657,14 @@ void AvSyncDock::applyOffset()
 	Plugin &p = Plugin::instance();
 	int v, a;
 	p.resolvedPair(v, a);
-	auto snap = p.engine().snapshot(0);
+	const auto snap = p.engine().snapshot(0);
 	const ProbeSnapshot *audio = nullptr;
 	for (const auto &s : snap)
 		if (s.id == a)
 			audio = &s;
 	if (!audio || audio->sourceUuid.empty())
 		return;
-	PairStats ps = p.engine().pair(v, a, (size_t)p.config().liveWindow);
+	const PairStats ps = p.engine().pair(v, a, (size_t)p.config().liveWindow);
 	if (ps.offset.count < 3)
 		return;
 
@@ -613,74 +690,99 @@ void AvSyncDock::refresh()
 {
 	if (!isVisible())
 		return;
-	Plugin &p = Plugin::instance();
 
 	// test hook: AVSYNC_DOCK_SNAPSHOT=<file.png> saves a screenshot of the dock every 5 s
 	static const char *snapshotPath = getenv("AVSYNC_DOCK_SNAPSHOT");
 	static int snapshotCounter = 0;
-	if (snapshotPath && ++snapshotCounter % 25 == 0)
-		content_->grab().save(QString::fromLocal8Bit(snapshotPath));
+	if (snapshotPath && ++snapshotCounter % 25 == 0) {
+		// the theme paints the dark background on the dock frame, so render onto a dark canvas
+		QPixmap pm(content_->size());
+		pm.fill(QColor(0x1e, 0x1f, 0x29));
+		content_->render(&pm, QPoint(), QRegion(), QWidget::DrawChildren);
+		pm.save(QString::fromLocal8Bit(snapshotPath));
+		if (snapshotCounter == 25) {
+			phonePanel_->resize(content_->width(), phonePanel_->sizeHint().height());
+			phonePanel_->grab().save(QString::fromLocal8Bit(snapshotPath) + QStringLiteral(".phone.png"));
+		}
+	}
 
-	// clock
-	const double utc = p.nowUtcMs();
-	clockLabel_->setText(QDateTime::fromMSecsSinceEpoch((qint64)utc).toString(QStringLiteral("HH:mm:ss.zzz")));
-	ClockStatus cs = p.clock().status();
-	if (cs.ntpSynced)
-		clockStatus_->setText(T("Dock.Clock.Ntp").arg(QString::fromStdString(cs.server), ms(cs.errorMs),
-							       signedMs(cs.systemOffsetMs, 0)));
-	else
-		clockStatus_->setText(T("Dock.Clock.System").arg(QString::fromStdString(cs.lastError)));
-	clockStatus_->setStyleSheet(cs.ntpSynced ? QString() : QStringLiteral("color: #e0a030;"));
-
-	// phone link: online page (works everywhere) and LAN page served by the plugin (precise clock)
-	Config c = p.config();
-	const QString online = QString::fromStdString(c.publicPageUrl);
-	const auto urls = p.phoneUrls();
-	const QString lan = urls.empty() ? QString() : QString::fromStdString(urls.front());
-	QString html;
-	if (!online.isEmpty())
-		html += T("Dock.Phone.Online") + QStringLiteral(" <a href=\"%1\">%1</a><br>").arg(online.toHtmlEscaped());
-	if (!urls.empty()) {
-		html += T("Dock.Phone.Lan");
-		for (const auto &u : urls)
-			html += QStringLiteral(" <a href=\"%1\">%1</a>").arg(QString::fromStdString(u).toHtmlEscaped());
-	} else if (c.serverEnabled) {
-		html += QStringLiteral("<span style=\"color:#e05050\">%1</span>")
-				.arg(T("Dock.Phone.ServerError").arg(QString::fromStdString(p.serverError()).toHtmlEscaped()));
-	}
-	if (html != urlLabel_->text())
-		urlLabel_->setText(html);
-	if (online != qrText_) {
-		qrText_ = online;
-		qrLabel_->setPixmap(online.isEmpty() ? QPixmap() : makeQr(online, 112));
-		qrColumn_->setVisible(!online.isEmpty());
-	}
-	if (lan != qrLanText_) {
-		qrLanText_ = lan;
-		qrLanLabel_->setPixmap(lan.isEmpty() ? QPixmap() : makeQr(lan, 112));
-		qrLanColumn_->setVisible(!lan.isEmpty());
-	}
-	QStringList phones;
-	for (const auto &cl : p.server().clients()) {
-		const double err = json::number(cl.status, "syncErrMs", NAN);
-		const double hz = json::number(cl.status, "refreshHz", NAN);
-		const bool running = json::boolean(cl.status, "running");
-		phones << T("Dock.Phone.Client")
-				  .arg(QString::fromStdString(cl.name.empty() ? cl.address : cl.name).toHtmlEscaped(),
-				       ms(err), ms(hz, 0), running ? T("Dock.Phone.Running") : T("Dock.Phone.Paused"));
-	}
-	phonesLabel_->setText(phones.isEmpty() ? T("Dock.Phone.NoClients") : phones.join(QStringLiteral("<br>")));
-
-	auto snap = p.engine().snapshot(60);
+	auto snap = Plugin::instance().engine().snapshot(60);
 	std::stable_sort(snap.begin(), snap.end(), [](const ProbeSnapshot &a, const ProbeSnapshot &b) {
 		if (a.kind != b.kind)
 			return a.kind == Kind::Video;
 		return a.origin == "filter" && b.origin != "filter";
 	});
+	refreshHeaderAndPhone(snap);
 	refreshCombos(snap);
 	refreshTable(snap);
 	refreshOffset(snap);
 	refreshSession();
+}
+
+void AvSyncDock::refreshHeaderAndPhone(const std::vector<ProbeSnapshot> &snap)
+{
+	Plugin &p = Plugin::instance();
+	const double utc = p.nowUtcMs();
+	clockLabel_->setText(QDateTime::fromMSecsSinceEpoch((qint64)utc).toString(QStringLiteral("HH:mm:ss.zzz")));
+
+	const ClockStatus cs = p.clock().status();
+	if (cs.ntpSynced) {
+		ntpLabel_->setText(QStringLiteral("NTP ±%1 ms").arg(ms(cs.errorMs)));
+		ntpLabel_->setStyleSheet(QStringLiteral("color: #3ecf8e; font-size: 8pt;"));
+		ntpLabel_->setToolTip(T("Dock.Clock.Ntp").arg(QString::fromStdString(cs.server), ms(cs.errorMs),
+								 signedMs(cs.systemOffsetMs, 0)));
+	} else {
+		ntpLabel_->setText(T("Dock.Clock.SystemShort"));
+		ntpLabel_->setStyleSheet(QStringLiteral("color: #f5b942; font-size: 8pt;"));
+		ntpLabel_->setToolTip(T("Dock.Clock.System").arg(QString::fromStdString(cs.lastError)));
+	}
+
+	// phone panel: online page (works everywhere) and LAN page served by the plugin (precise)
+	const Config c = p.config();
+	const QString online = QString::fromStdString(c.publicPageUrl);
+	const auto urls = p.phoneUrls();
+	const QString lan = urls.empty() ? QString() : QString::fromStdString(urls.front());
+	QString html;
+	if (!online.isEmpty())
+		html += QStringLiteral("<a href=\"%1\">%1</a><br>").arg(online.toHtmlEscaped());
+	for (const auto &u : urls)
+		html += QStringLiteral("<a href=\"%1\">%1</a> ").arg(QString::fromStdString(u).toHtmlEscaped());
+	if (urls.empty() && c.serverEnabled)
+		html += QStringLiteral("<span style=\"color:#e05050\">%1</span>")
+				.arg(T("Dock.Phone.ServerError").arg(QString::fromStdString(p.serverError()).toHtmlEscaped()));
+	if (html != linksLabel_->text())
+		linksLabel_->setText(html);
+	if (online != qrOnlineText_) {
+		qrOnlineText_ = online;
+		qrOnline_->setPixmap(online.isEmpty() ? QPixmap() : makeQr(online, 92));
+		qrOnlineCol_->setVisible(!online.isEmpty());
+	}
+	if (lan != qrLanText_) {
+		qrLanText_ = lan;
+		qrLan_->setPixmap(lan.isEmpty() ? QPixmap() : makeQr(lan, 92));
+		qrLanCol_->setVisible(!lan.isEmpty());
+	}
+
+	const auto clients = p.server().clients();
+	QStringList phones;
+	for (const auto &cl : clients) {
+		phones << T("Dock.Phone.Client")
+				  .arg(QString::fromStdString(cl.name.empty() ? cl.address : cl.name).toHtmlEscaped(),
+				       ms(json::number(cl.status, "syncErrMs", NAN)),
+				       ms(json::number(cl.status, "refreshHz", NAN), 0),
+				       json::boolean(cl.status, "running") ? T("Dock.Phone.Running") : T("Dock.Phone.Paused"));
+	}
+	phonesLabel_->setText(phones.join(QStringLiteral("<br>")));
+	phonesLabel_->setVisible(!phones.isEmpty());
+	qrButton_->setText(clients.empty() ? QStringLiteral("📱") : QStringLiteral("📱 %1").arg(clients.size()));
+
+	// Show the QR codes while nothing is measured, hide them as soon as results come in.
+	if (!phonePanelUserChoice_) {
+		const bool measuring = std::any_of(snap.begin(), snap.end(), [](const ProbeSnapshot &s) {
+			return s.lastAgeMs >= 0 && s.lastAgeMs < 10000;
+		});
+		phonePanel_->setVisible(!measuring);
+	}
 }
 
 void AvSyncDock::refreshCombos(const std::vector<ProbeSnapshot> &snap)
@@ -710,7 +812,7 @@ void AvSyncDock::refreshCombos(const std::vector<ProbeSnapshot> &snap)
 			combo->addItems(names);
 			ids = newIds;
 		}
-		auto it = std::find(ids.begin(), ids.end(), current);
+		const auto it = std::find(ids.begin(), ids.end(), current);
 		const int idx = it == ids.end() ? -1 : (int)(it - ids.begin());
 		if (combo->currentIndex() != idx) {
 			QSignalBlocker block(combo);
@@ -728,42 +830,50 @@ void AvSyncDock::refreshTable(const std::vector<ProbeSnapshot> &snap)
 		int h = table_->horizontalHeader()->sizeHint().height() + 2 * table_->frameWidth();
 		for (int r = 0; r < table_->rowCount(); r++)
 			h += table_->verticalHeader()->sectionSize(r);
-		table_->setFixedHeight(std::max(h, 60));
+		table_->setFixedHeight(std::max(h, 40));
 	}
-	auto set = [this](int row, int col, const QString &text, const QString &tip = QString()) {
-		QTableWidgetItem *item = table_->item(row, col);
-		if (!item) {
-			item = new QTableWidgetItem();
-			item->setTextAlignment(col == 0 || col == 5 ? Qt::AlignLeft | Qt::AlignVCenter : Qt::AlignRight | Qt::AlignVCenter);
-			table_->setItem(row, col, item);
+	const bool anyData = std::any_of(snap.begin(), snap.end(), [](const ProbeSnapshot &s) { return s.total.count > 0; });
+	emptyHint_->setVisible(!anyData);
+
+	static const QIcon green = dotIcon(kGreen), orange = dotIcon(kOrange), grey = dotIcon(kGrey);
+	auto item = [this](int row, int col) {
+		QTableWidgetItem *it = table_->item(row, col);
+		if (!it) {
+			it = new QTableWidgetItem();
+			it->setTextAlignment(col == 0 ? Qt::AlignLeft | Qt::AlignVCenter : Qt::AlignRight | Qt::AlignVCenter);
+			table_->setItem(row, col, it);
 		}
-		if (item->text() != text)
-			item->setText(text);
-		if (item->toolTip() != tip)
-			item->setToolTip(tip);
+		return it;
 	};
 	for (int row = 0; row < (int)snap.size(); row++) {
 		const ProbeSnapshot &s = snap[(size_t)row];
-		const QString icon = s.kind == Kind::Video ? QStringLiteral("🎥 ") : QStringLiteral("🎤 ");
-		const QString name = icon + QString::fromStdString(s.name);
 		const bool fresh = s.lastAgeMs >= 0 && s.lastAgeMs < 4000;
-		const QString tip = T("Dock.Row.Tip")
-					    .arg(ms(s.live.mean), ms(s.live.min), ms(s.live.max), ms(s.total.median))
-					    .arg(s.total.count);
-		set(row, 0, name, tip);
-		set(row, 1, s.live.count ? ms(s.live.last) : QStringLiteral("–"), tip);
-		set(row, 2, s.live.count ? ms(s.live.median) : QStringLiteral("–"), tip);
-		set(row, 3, s.live.count > 1 ? ms(s.live.stddev) : QStringLiteral("–"), tip);
-		set(row, 4, QString::number(s.total.count), tip);
+		QString name = (s.kind == Kind::Video ? QStringLiteral("🎥 ") : QStringLiteral("🎤 ")) + QString::fromStdString(s.name);
 		QString status = QString::fromStdString(s.signal.text);
 		if (s.live.count && !s.locked)
 			status += QStringLiteral(" · ") + T("Dock.Status.Unverified");
-		set(row, 5, status, tip);
-		QColor color = fresh ? palette().color(QPalette::Text) : palette().color(QPalette::PlaceholderText);
-		for (int col = 0; col < 6; col++)
-			if (QTableWidgetItem *item = table_->item(row, col))
-				if (item->foreground().color() != color)
-					item->setForeground(color);
+		const QString tip = status + QStringLiteral("\n") +
+				    T("Dock.Row.Tip")
+					    .arg(ms(s.live.last), ms(s.live.mean), ms(s.live.min), ms(s.live.max), ms(s.total.median))
+					    .arg(s.total.count);
+
+		QTableWidgetItem *nameItem = item(row, 0);
+		if (nameItem->text() != name)
+			nameItem->setText(name);
+		nameItem->setIcon(fresh ? green : s.signal.ok ? orange : grey);
+		const QString values[3] = {s.live.count ? ms(s.live.median) : QStringLiteral("–"),
+					   s.live.count > 1 ? ms(s.live.stddev) : QStringLiteral("–"),
+					   QString::number(s.total.count)};
+		for (int col = 0; col < 4; col++) {
+			QTableWidgetItem *it = item(row, col);
+			if (col > 0 && it->text() != values[col - 1])
+				it->setText(values[col - 1]);
+			if (it->toolTip() != tip)
+				it->setToolTip(tip);
+			const QColor color = fresh ? palette().color(QPalette::Text) : palette().color(QPalette::PlaceholderText);
+			if (it->foreground().color() != color)
+				it->setForeground(color);
+		}
 	}
 }
 
@@ -779,49 +889,57 @@ void AvSyncDock::refreshOffset(const std::vector<ProbeSnapshot> &snap)
 		if (s.id == a)
 			as = &s;
 	}
-	const size_t window = (size_t)p.config().liveWindow;
-	PairStats ps = p.engine().pair(v, a, window);
+	const PairStats ps = p.engine().pair(v, a, (size_t)p.config().liveWindow);
 	if (ps.offset.count == 0) {
 		offsetLabel_->setText(QStringLiteral("Δ –"));
 		offsetHint_->setText(vs && as ? T("Dock.Offset.Waiting") : T("Dock.Offset.NoPair"));
+		offsetHint_->setToolTip(QString());
 		applyButton_->setEnabled(false);
 	} else {
 		const double off = ps.offset.median;
 		offsetLabel_->setText(QStringLiteral("Δ %1 ms").arg(signedMs(off)));
-		QString hint;
-		if (std::fabs(off) < 5.0)
+		QString hint, advice;
+		if (std::fabs(off) < 5.0) {
 			hint = T("Dock.Offset.InSync");
-		else if (off < 0)
+		} else if (off < 0) {
 			hint = T("Dock.Offset.AudioEarly").arg(ms(-off, 0));
-		else
+			advice = T("Dock.Offset.AudioEarly.Tip");
+		} else {
 			hint = T("Dock.Offset.AudioLate").arg(ms(off, 0));
+			advice = T("Dock.Offset.AudioLate.Tip");
+		}
 		if (ps.relative)
-			hint += QStringLiteral("\n") + T("Dock.Offset.Relative");
-		else
-			hint += QStringLiteral("\n") +
-				T("Dock.Offset.Details").arg(ms(vs ? vs->live.median : NAN), ms(as ? as->live.median : NAN),
-							     ms(ps.offset.stddev)).arg(ps.offset.count);
+			hint += QStringLiteral(" · ") + T("Dock.Offset.RelativeShort");
+		QString tip = ps.relative ? T("Dock.Offset.Relative")
+					  : T("Dock.Offset.Details")
+						    .arg(ms(vs ? vs->live.median : NAN), ms(as ? as->live.median : NAN),
+							 ms(ps.offset.stddev))
+						    .arg(ps.offset.count);
+		if (!advice.isEmpty())
+			tip += QStringLiteral("\n") + advice;
 		offsetHint_->setText(hint);
+		offsetHint_->setToolTip(tip);
+		offsetLabel_->setToolTip(tip);
 		applyButton_->setEnabled(as && as->origin == "filter" && !as->sourceUuid.empty() && ps.offset.count >= 3 &&
 					 std::fabs(off) >= 1.0);
 	}
 
 	std::vector<LatencyGraph::Series> series;
 	if (vs) {
-		LatencyGraph::Series s{T("Dock.Graph.Video"), QColor(77, 163, 255), {}};
+		LatencyGraph::Series s{kVideoColor, {}};
 		for (const auto &m : vs->recent)
 			s.points.push_back({m.seq, m.latencyMs});
 		series.push_back(std::move(s));
 	}
 	if (as) {
-		LatencyGraph::Series s{T("Dock.Graph.Audio"), QColor(245, 160, 60), {}};
+		LatencyGraph::Series s{kAudioColor, {}};
 		for (const auto &m : as->recent)
 			s.points.push_back({m.seq, m.latencyMs});
 		series.push_back(std::move(s));
 	}
 	if (ps.offset.count) {
-		PairStats longer = p.engine().pair(v, a, 60);
-		LatencyGraph::Series s{T("Dock.Graph.Offset"), QColor(80, 200, 120), {}};
+		const PairStats longer = p.engine().pair(v, a, 60);
+		LatencyGraph::Series s{kOffsetColor, {}};
 		for (const auto &r : longer.recent)
 			s.points.push_back({r.first, r.second});
 		series.push_back(std::move(s));
@@ -832,13 +950,12 @@ void AvSyncDock::refreshOffset(const std::vector<ProbeSnapshot> &snap)
 void AvSyncDock::refreshSession()
 {
 	Plugin &p = Plugin::instance();
-	SessionResult r = p.engine().session();
+	const SessionResult r = p.engine().session();
 	const double now = p.nowUtcMs();
 	const QString startText = QDateTime::fromMSecsSinceEpoch((qint64)r.startUtcMs).toString(QStringLiteral("HH:mm:ss"));
-	QString text;
+	QString text, tip;
 	switch (r.state) {
 	case SessionState::Idle:
-		text = T("Dock.Session.Idle");
 		break;
 	case SessionState::Scheduled:
 		text = T("Dock.Session.Scheduled").arg(startText, ms((r.startUtcMs - now) / 1000.0, 0));
@@ -851,28 +968,32 @@ void AvSyncDock::refreshSession()
 	}
 	case SessionState::Finished: {
 		text = T("Dock.Session.Finished").arg(startText);
-		for (const auto &row : r.probes) {
-			if (!row.stats.count)
-				continue;
-			text += QStringLiteral("\n%1 %2: Ø %3 ms, Median %4 ms, σ %5 ms (n=%6)")
-					.arg(row.kind == Kind::Video ? QStringLiteral("🎥") : QStringLiteral("🎤"),
-					     QString::fromStdString(row.name), ms(row.stats.mean), ms(row.stats.median),
-					     ms(row.stats.stddev))
-					.arg(row.stats.count);
-		}
 		if (r.pairOffset.count)
-			text += QStringLiteral("\n") + T("Dock.Session.Offset").arg(signedMs(r.pairOffset.median), ms(r.pairOffset.stddev));
+			text += QStringLiteral(" · Δ %1 ms").arg(signedMs(r.pairOffset.median));
 		const std::string csv = p.lastCsvPath();
 		const std::string err = p.lastCsvError();
 		if (!csv.empty())
-			text += QStringLiteral("\n") + T("Dock.Session.Saved").arg(QString::fromStdString(csv));
+			text += QStringLiteral(" · <a href=\"%1\">CSV</a>").arg(QString::fromStdString(csv).toHtmlEscaped());
 		if (!err.empty())
-			text += QStringLiteral("\n") + QString::fromStdString(err);
+			text += QStringLiteral(" · <span style=\"color:#e05050\">%1</span>")
+					.arg(QString::fromStdString(err).toHtmlEscaped());
+		for (const auto &row : r.probes) {
+			if (!row.stats.count)
+				continue;
+			tip += QStringLiteral("%1 %2: Median %3 ms, σ %4 ms (n=%5)\n")
+				       .arg(row.kind == Kind::Video ? QStringLiteral("🎥") : QStringLiteral("🎤"),
+					    QString::fromStdString(row.name), ms(row.stats.median), ms(row.stats.stddev))
+				       .arg(row.stats.count);
+		}
+		if (!csv.empty())
+			tip += QString::fromStdString(csv);
 		break;
 	}
 	}
 	if (sessionLabel_->text() != text)
 		sessionLabel_->setText(text);
+	sessionLabel_->setToolTip(tip.trimmed());
+	sessionLabel_->setVisible(!text.isEmpty());
 	cancelButton_->setEnabled(r.state == SessionState::Scheduled || r.state == SessionState::Running);
 }
 

@@ -6,7 +6,8 @@ param(
     [switch]$NoPlugin,
     [switch]$Clean
 )
-$ErrorActionPreference = "Stop"
+# cmake/ninja may write warnings to stderr: failures are detected via $LASTEXITCODE
+$ErrorActionPreference = "Continue"
 . "$PSScriptRoot\msvc-env.ps1"
 
 $root = (Resolve-Path "$PSScriptRoot\..").Path

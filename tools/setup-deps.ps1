@@ -16,13 +16,20 @@ Write-Host "Installierte OBS-Version: $obsVersion"
 
 # 1) OBS headers (sparse checkout)
 $src = Join-Path $deps "obs-studio"
+# git writes progress to stderr: no global "Stop" for the git calls, check exit codes instead
+$ErrorActionPreference = "Continue"
 if (-not (Test-Path "$src\.git")) {
-    git clone --depth 1 --branch $obsVersion --filter=blob:none --sparse https://github.com/obsproject/obs-studio.git $src
+    git clone -q --depth 1 --branch $obsVersion --filter=blob:none --sparse https://github.com/obsproject/obs-studio.git $src
+    if ($LASTEXITCODE -ne 0) { throw "git clone fehlgeschlagen" }
 } else {
-    git -C $src fetch --depth 1 origin tag $obsVersion
+    git -C $src fetch -q --depth 1 origin tag $obsVersion
+    if ($LASTEXITCODE -ne 0) { throw "git fetch fehlgeschlagen" }
     git -C $src checkout -q $obsVersion
+    if ($LASTEXITCODE -ne 0) { throw "git checkout fehlgeschlagen" }
 }
 git -C $src sparse-checkout set libobs frontend/api
+if ($LASTEXITCODE -ne 0) { throw "git sparse-checkout fehlgeschlagen" }
+$ErrorActionPreference = "Stop"
 
 # 2) Qt6 SDK (official obs-deps build, Qt 6.8 - also builds with VS 2019)
 $qt = Join-Path $deps "qt6"
@@ -37,6 +44,7 @@ if (-not (Test-Path "$qt\lib\cmake\Qt6")) {
     if ($hash -ne $QtDepsHash) { throw "SHA256 stimmt nicht: $hash" }
     New-Item -ItemType Directory -Force $qt | Out-Null
     tar -xf $zip -C $qt
+    if ($LASTEXITCODE -ne 0) { throw "Entpacken fehlgeschlagen" }
 }
 
 # 3) import libraries
